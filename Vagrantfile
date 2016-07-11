@@ -10,6 +10,8 @@ require 'yaml'
 require 'net/http'
 require 'net/https'
 require 'uri'
+require 'json'
+require 'base64'
 
 Vagrant.require_version ">= 1.6.0"
 
@@ -65,6 +67,18 @@ system("mkdir -p #{KUBEPATH}/tmp/ssl && #{KUBEPATH}/scripts/init-ssl-ca #{KUBEPA
 
 # Generate admin key/cert
 system("#{KUBEPATH}/scripts/init-ssl #{KUBEPATH}/tmp/ssl admin kube-admin") or abort("failed generating admin SSL artifacts")
+
+if File.exist?(CLUSTERCONFIG)
+  system "cp #{KUBEPATH}/env-cfg.yaml.tmpl #{KUBEPATH}/tmp/env-cfg.yaml"
+  File.open("#{KUBEPATH}/tmp/env-cfg.yaml", 'a') do |f|
+    File.open(CLUSTERCONFIG, "r").each_line do |line|
+      data = line.split("=")
+      unless data[1].nil?
+        f.puts "  " + data[0].downcase.gsub('_', '-') + ": " + Base64.strict_encode64(data[1]) + "\n"
+      end
+    end
+  end
+end
 
 def provisionMachineSSL(machine,certBaseName,cn,ipAddrs)
   tarFile = "#{KUBEPATH}/tmp/ssl/#{cn}.tar"
