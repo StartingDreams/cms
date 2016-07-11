@@ -1,0 +1,7 @@
+.vagrant
+.srl
+.git
+node_modules
+build
+kube/dev/config.rb
+kube/dev/tmp/

@@ -1,0 +1,5 @@
+  - name: shared
+    source: ./
+    destination: /home/core/shared
+    nfs: true
+    mount_options: 'nolock,vers=3,udp,noatime'

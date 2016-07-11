@@ -1,0 +1,51 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: cms
+        tier: frontend
+        restartFlag: node
+    spec:
+      containers:
+      - name: frontend
+        image: startingdreams/cms:v0.1.0
+        imagePullPolicy: Always
+        command: ["npm", "start"]
+        env:
+        - name: ENVIRONMENT
+          value: development
+        - name: GET_HOSTS_FROM
+          value: dns
+        - name: FRONTEND_KEY
+          valueFrom:
+            secretKeyRef:
+              name: frontend.ssl
+              key: frontend.key.pem
+        - name: FRONTEND_CERT
+          valueFrom:
+            secretKeyRef:
+              name: frontend.ssl
+              key: frontend.cert.pem
+        ports:
+        - containerPort: 3000
+#          hostPort: 3000
+#          name: app-http
+        - containerPort: 3443
+#          hostPort: 3443
+#          name: app-https
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        volumeMounts:
+          - name: app-code
+            mountPath: /usr/src/app/
+      volumes:
+        - name: app-code
+          hostPath:
+            path: /home/core/shared/
