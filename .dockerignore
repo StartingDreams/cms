@@ -1,5 +1,6 @@
 .git
 .vagrant
+.idea
 node_modules
 Vagrantfile
 Dockerfile

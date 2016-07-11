@@ -1,3 +1,4 @@
+# https://github.com/kubernetes/contrib/tree/master/service-loadbalancer
 apiVersion: v1
 kind: ReplicationController
 metadata:
@@ -55,6 +56,5 @@ spec:
           hostPort: 1936
           protocol: TCP
         resources: {}
-        # this assumes you have a service called frontend that you wish
         args:
-        - --tcp-services=mysql:3306,frontend:80,redis:6379,mongo:27017
+        - --tcp-services=mysql:3306,frontend-http:80,frontend-https:443,redis:6379,mongo:27017

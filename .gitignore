@@ -1,7 +1,10 @@
 .vagrant
 .srl
 .git
+.idea
 node_modules
 build
 kube/dev/config.rb
 kube/dev/tmp/
+kube/dev/loadbalancer.yaml
+kube/dev/env.cfg
