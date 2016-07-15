@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: frontend-deployment
 spec:
-  replicas: 2
+  replicas: 1
   template:
     metadata:
       labels:
@@ -13,14 +13,15 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: startingdreams/cms:v0.1.0
-        imagePullPolicy: Always
-        command: ["npm", "start"]
+        image: startingdreams/cms:v0.1.1
+        imagePullPolicy: IfNotPresent
+        command: ["/entrypoints/entrypoint", "cms"]
         env:
         - name: ENVIRONMENT
-          value: development
-        - name: GET_HOSTS_FROM
-          value: dns
+          valueFrom:
+            secretKeyRef:
+              name: env-config
+              key: environment
         - name: FRONTEND_KEY
           valueFrom:
             secretKeyRef:
@@ -33,19 +34,25 @@ spec:
               key: frontend.cert.pem
         ports:
         - containerPort: 3000
-#          hostPort: 3000
-#          name: app-http
         - containerPort: 3443
-#          hostPort: 3443
-#          name: app-https
         resources:
           requests:
             cpu: 100m
             memory: 100Mi
         volumeMounts:
-          - name: app-code
-            mountPath: /usr/src/app/
+          - name: site-volume
+            mountPath: /usr/src/app
+          - name: entrypoints
+            mountPath: /entrypoints
+          - name: package-json
+            mountPath: /usr/src/app/package.json
       volumes:
-        - name: app-code
+        - name: site-volume
           hostPath:
-            path: /home/core/shared/
+            path: /home/core/shared/build
+        - name: entrypoints
+          hostPath:
+            path: /home/core/shared/entrypoints
+        - name: package-json
+          hostPath:
+            path: /home/core/shared/package.json

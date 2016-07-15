@@ -68,24 +68,94 @@ system("mkdir -p #{KUBEPATH}/tmp/ssl && #{KUBEPATH}/scripts/init-ssl-ca #{KUBEPA
 # Generate admin key/cert
 system("#{KUBEPATH}/scripts/init-ssl #{KUBEPATH}/tmp/ssl admin kube-admin") or abort("failed generating admin SSL artifacts")
 
-if File.exist?(CLUSTERCONFIG)
-  system "cp #{KUBEPATH}/env-cfg.yaml.tmpl #{KUBEPATH}/tmp/env-cfg.yaml"
-  File.open("#{KUBEPATH}/tmp/env-cfg.yaml", 'a') do |f|
-    File.open(CLUSTERCONFIG, "r").each_line do |line|
-      data = line.split("=")
-      unless data[1].nil?
-        f.puts "  " + data[0].downcase.gsub('_', '-') + ": " + Base64.strict_encode64(data[1]) + "\n"
-      end
-    end
-  end
-end
-
 def provisionMachineSSL(machine,certBaseName,cn,ipAddrs)
   tarFile = "#{KUBEPATH}/tmp/ssl/#{cn}.tar"
   ipString = ipAddrs.map.with_index { |ip, i| "IP.#{i+1}=#{ip}"}.join(",")
   system("#{KUBEPATH}/scripts/init-ssl #{KUBEPATH}/tmp/ssl #{certBaseName} #{cn} #{ipString}") or abort("failed generating #{cn} SSL artifacts")
   machine.vm.provision :file, :source => tarFile, :destination => "/tmp/ssl.tar"
   machine.vm.provision :shell, :inline => "mkdir -p /etc/kubernetes/ssl && tar -C /etc/kubernetes/ssl -xf /tmp/ssl.tar", :privileged => true
+end
+
+def addMountPoints(config)
+  kubeVolumeFile = "";
+  begin
+    MOUNT_POINTS.each do |mount|
+      mount_options = ""
+      disabled = false
+      nfs =  true
+      if mount['mount_options']
+        mount_options = mount['mount_options']
+      end
+      if mount['disabled']
+        disabled = mount['disabled']
+      end
+      if mount['nfs']
+        nfs = mount['nfs']
+      end
+      if File.exist?(File.expand_path("#{mount['source']}"))
+        if mount['destination']
+          config.vm.synced_folder "#{mount['source']}", "#{mount['destination']}",
+            id: "#{mount['name']}",
+            disabled: disabled,
+            mount_options: ["#{mount_options}"],
+            nfs: nfs
+          info "mounted #{mount['source']} as #{mount['destination']}"
+        end
+      end
+    end
+  rescue
+  end
+end
+
+def waitForIP(urlString)
+  j, uri, res, http, req = 0, URI.parse(urlString), nil, nil, nil
+  loop do
+    j += 1
+    begin
+      http = Net::HTTP.new(uri.host, 443)
+      http.use_ssl = true
+      http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+      req = Net::HTTP::Get.new(uri.request_uri)
+      res = http.request(req)
+    rescue
+      sleep 10
+    end
+    break if res.is_a? Net::HTTPSuccess or res.is_a? Net::HTTPUnauthorized
+  end
+  info "Address #{urlString} has responded"
+end
+
+def waitForKubeNodeUP(nodeName)
+  loop do
+    nodestring = `kubectl get nodes | grep "#{nodeName}"`
+    sleep 1
+    break if nodestring.include? workerIP(1)
+  end
+  info "Kube node #{nodeName} is up"
+end
+
+def createEnvConfig()
+  envConfig = <<-envConfig
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: env-config
+type: Opaque
+data:
+envConfig
+
+  if File.exist?(CLUSTERCONFIG)
+    File.open(CLUSTERCONFIG, "r").each_line do |line|
+      data = line.split("=")
+      unless data[1].nil?
+        envConfig.concat("  " + data[0].downcase.gsub('_', '-') + ": " + Base64.strict_encode64(data[1]) + "\n")
+      end
+    end
+    File.open("#{KUBEPATH}/tmp/env-cfg.yaml", 'w') do |f|
+      f.puts envConfig
+    end
+  end
 end
 
 Vagrant.configure("2") do |config|
@@ -220,53 +290,27 @@ Vagrant.configure("2") do |config|
       worker.vm.provision :file, :source => WORKER_CLOUD_CONFIG_PATH, :destination => "/tmp/vagrantfile-user-data"
       worker.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
 
-      begin
-        MOUNT_POINTS.each do |mount|
-          mount_options = ""
-          disabled = false
-          nfs =  true
-          if mount['mount_options']
-            mount_options = mount['mount_options']
-          end
-          if mount['disabled']
-            disabled = mount['disabled']
-          end
-          if mount['nfs']
-            nfs = mount['nfs']
-          end
-          if File.exist?(File.expand_path("#{mount['source']}"))
-            if mount['destination']
-              worker.vm.synced_folder "#{mount['source']}", "#{mount['destination']}",
-                id: "#{mount['name']}",
-                disabled: disabled,
-                mount_options: ["#{mount_options}"],
-                nfs: nfs
-            end
-          end
-        end
-      rescue
-      end
+      addMountPoints(worker)
 
       # after creating the final worker, wait for the controller
       # to become active then run the setup_kube script
       if i == $worker_count
         worker.trigger.after [:up] do
-          info "Waiting for Kubernetes to become ready..."
-          j, uri, res, http, req = 0, URI.parse("https://" + controllerIP(1) + "/"), nil, nil, nil
-          loop do
-            j += 1
-            begin
-              http = Net::HTTP.new(uri.host, 443)
-              http.use_ssl = true
-              http.verify_mode = OpenSSL::SSL::VERIFY_NONE
-              req = Net::HTTP::Get.new(uri.request_uri)
-              res = http.request(req)
-            rescue
-              sleep 10
-            end
-            break if res.is_a? Net::HTTPSuccess or res.is_a? Net::HTTPUnauthorized
-          end
-          exec "#{KUBEPATH}/setup_kube.sh #{KUBEPATH} " + controllerIP(1) + " " + workerIP(1)
+          info "Kubernetes: Waiting for controller to become ready..."
+          waitForIP("https://" + controllerIP(1))
+          info "Kubernetes: Start Setup"
+          system("#{KUBEPATH}/scripts/setup_kube.sh #{KUBEPATH} " + controllerIP(1) + " " + workerIP(1))
+          info "Kubernetes: Create env config"
+          createEnvConfig()
+          info "Kubernetes: Create Secrets"
+          system("#{KUBEPATH}/scripts/setup_secrets.sh #{KUBEPATH} " + controllerIP(1) + " " + workerIP(1))
+          info "Kubernetes: Waiting for workers to become ready..."
+          waitForKubeNodeUP(workerIP(1))
+          info "Kuberneties: Installing LoadBalancer"
+          system("#{KUBEPATH}/scripts/start_loadbalancer.sh #{KUBEPATH} " + controllerIP(1) + " " + workerIP(1))
+          info "Kuberneties: Starting Cluster"
+          system("#{KUBEPATH}/scripts/start_cluster.sh #{KUBEPATH} " + controllerIP(1) + " " + workerIP(1))
+
         end
       end
     end
